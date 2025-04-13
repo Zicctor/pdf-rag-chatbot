@@ -1,0 +1,9 @@
+streamlit
+langchain
+langchain-together
+langchain-huggingface
+langchain-community
+langchain-core
+langgraph
+chromadb
+pypdf
