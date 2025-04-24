@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF RAG Chatbot</title>
+    <link rel="stylesheet" href="styles.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <h1>PDF RAG Chatbot</h1>
+
+    <div class="container">
+        <div id="sidebar">
+            <div id="upload-section">
+                <form id="upload-form" onsubmit="return false;">
+                    <label for="pdf-upload" id="pdf-upload-label">
+                        <i class="fas fa-file-pdf"></i> Upload PDF
+                    </label>
+                    <input type="file" id="pdf-upload" accept="application/pdf" />
+                    <span id="upload-status">No PDF uploaded.</span>
+                    <button id="reset-upload" type="button">
+                        <i class="fas fa-trash-alt"></i> Reset Upload
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div id="chat-container">
+                <div id="chat-interface">
+                    <div class="chat-message bot-message">
+                        <p>Hi there! Upload a PDF document to start asking questions about it.</p>
+                    </div>
+                    <!-- Chat messages will be added here -->
+                </div>
+                <div id="input-area">
+                    <input type="text" id="user-input" placeholder="Ask a question about your document..." disabled>
+                    <button id="send-button" disabled>
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const pdfUpload = document.getElementById('pdf-upload');
+        const resetUpload = document.getElementById('reset-upload');
+        const uploadStatus = document.getElementById('upload-status');
+        const chatInterface = document.getElementById('chat-interface');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const uploadForm = document.getElementById('upload-form');
+
+        let uploadedPdfFilename = null; // Variable to store the filename
+        let isGenerating = false;
+        
+        // Define the API base URL - change this to match your backend server
+        const API_BASE_URL = 'http://localhost:8000';
+
+        // Prevent form submission (which would cause page reload)
+        uploadForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            return false;
+        });
+
+        // --- Helper Functions ---
+        function scrollToBottom() {
+            setTimeout(() => {
+                chatInterface.scrollTop = chatInterface.scrollHeight;
+            }, 100);
+        }
+
+        function addMessage(message, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('chat-message');
+            
+            if (sender === 'user') {
+                messageDiv.classList.add('user-message');
+                // User messages are typically short, can use text content directly
+                messageDiv.textContent = message;
+            } else if (sender === 'bot') {
+                messageDiv.classList.add('bot-message');
+                // Format bot messages with proper HTML
+                // Replace line breaks with <br> tags
+                const formattedMessage = formatMessageWithHTML(message);
+                messageDiv.innerHTML = formattedMessage;
+            } else if (sender === 'error') {
+                messageDiv.classList.add('error-message');
+                messageDiv.textContent = message;
+            }
+            
+            chatInterface.appendChild(messageDiv);
+            scrollToBottom();
+            return messageDiv;
+        }
+
+        function addGeneratingMessage() {
+            if (isGenerating) return null;
+            
+            isGenerating = true;
+            const generatingDiv = document.createElement('div');
+            generatingDiv.classList.add('generating');
+            generatingDiv.innerHTML = 'Generating<div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+            chatInterface.appendChild(generatingDiv);
+            scrollToBottom();
+            return generatingDiv;
+        }
+
+        function removeGeneratingMessage() {
+            const generatingMessage = document.querySelector('.generating');
+            if (generatingMessage) {
+                chatInterface.removeChild(generatingMessage);
+            }
+            isGenerating = false;
+        }
+
+        // Helper function to format message text with HTML
+        function formatMessageWithHTML(text) {
+            if (!text) return '';
+            
+            // First, escape any HTML to prevent XSS
+            let escaped = escapeHTML(text);
+            
+            // Check for code blocks (text between ``` or indented by 4 spaces)
+            escaped = formatCodeBlocks(escaped);
+            
+            // Replace newlines with <br> tags (skip this within pre-formatted code blocks)
+            escaped = escaped.replace(/\n(?!<\/pre>)/g, '<br>');
+            
+            // Add paragraph breaks for double newlines (outside of code blocks)
+            escaped = escaped.replace(/(<br>){2,}/g, '</p><p>');
+            
+            // Wrap in paragraph tags
+            escaped = '<p>' + escaped + '</p>';
+            
+            // Fix any empty paragraphs
+            escaped = escaped.replace(/<p><\/p>/g, '<p><br></p>');
+            
+            return escaped;
+        }
+
+        // Helper function to format code blocks
+        function formatCodeBlocks(text) {
+            // First, handle triple backtick code blocks
+            text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, language, code) {
+                return '<pre><code class="language-' + language + '">' + code + '</code></pre>';
+            });
+            
+            // Then handle indented code blocks (4 spaces or a tab)
+            const lines = text.split('\n');
+            let inCodeBlock = false;
+            let codeBlock = '';
+            let result = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].startsWith('    ') || lines[i].startsWith('\t')) {
+                    if (!inCodeBlock) {
+                        inCodeBlock = true;
+                        codeBlock = lines[i].substring(4); // Remove the 4 spaces
+                    } else {
+                        codeBlock += '\n' + lines[i].substring(4);
+                    }
+                } else {
+                    if (inCodeBlock) {
+                        result.push('<pre><code>' + codeBlock + '</code></pre>');
+                        inCodeBlock = false;
+                        codeBlock = '';
+                    }
+                    result.push(lines[i]);
+                }
+            }
+            
+            // Don't forget the last code block if there is one
+            if (inCodeBlock) {
+                result.push('<pre><code>' + codeBlock + '</code></pre>');
+            }
+            
+            return result.join('\n');
+        }
+
+        // Helper function to escape HTML special characters
+        function escapeHTML(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function enableChat(filename) {
+            console.log('Enabling chat with filename:', filename);
+            
+            // Store the filename in a more permanent way
+            uploadedPdfFilename = filename;
+            localStorage.setItem('uploadedPdfFilename', filename);
+            
+            uploadStatus.textContent = `Uploaded: ${filename}`;
+            pdfUpload.disabled = true; // Disable upload input after success
+            userInput.disabled = false;
+            sendButton.disabled = false;
+            addMessage(`PDF "${filename}" uploaded successfully! You can now ask questions about its content.`, 'bot');
+        }
+
+        function disableChat(isReset = false) {
+            console.log('Disabling chat, isReset:', isReset);
+            
+            uploadedPdfFilename = null;
+            localStorage.removeItem('uploadedPdfFilename');
+            
+            uploadStatus.textContent = 'No PDF uploaded.';
+            pdfUpload.value = ''; // Clear file input
+            pdfUpload.disabled = false;
+            userInput.disabled = true;
+            sendButton.disabled = true;
+            userInput.value = ''; // Clear query input
+            if (isReset) {
+                addMessage('Upload reset. Please upload a new PDF.', 'bot');
+            }
+        }
+
+        // Check if we have a previously uploaded PDF when the page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedFilename = localStorage.getItem('uploadedPdfFilename');
+            if (savedFilename) {
+                console.log('Found previously uploaded file:', savedFilename);
+                enableChat(savedFilename);
+            } else {
+                disableChat();
+            }
+        });
+
+        // --- Event Listeners ---
+        resetUpload.addEventListener('click', () => {
+            disableChat(true); // Reset and add a message
+        });
+
+        pdfUpload.addEventListener('change', async (e) => {
+            // Prevent default behavior
+            e.preventDefault();
+            
+            const file = pdfUpload.files[0];
+            if (file) {
+                console.log('Selected file:', file.name, 'Size:', file.size);
+                uploadStatus.textContent = 'Uploading...';
+                sendButton.disabled = true; // Disable send while uploading
+                userInput.disabled = true;
+                pdfUpload.disabled = true; // Disable to prevent multiple uploads
+
+                const formData = new FormData();
+                // Match the FastAPI endpoint parameter name which is 'file'
+                formData.append('file', file);
+                console.log('Uploading file with form parameter name: file');
+
+                try {
+                    // API endpoint using the base URL
+                    const response = await fetch(`${API_BASE_URL}/upload_pdf/`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Upload API Response:', data);
+                        
+                        // Only call enableChat if we haven't reset during the upload
+                        if (pdfUpload.disabled) {
+                            enableChat(data.filename);
+                        }
+                    } else {
+                        try {
+                            const errorData = await response.json();
+                            console.error('Error uploading PDF:', response.status, errorData);
+                            addMessage(`Error uploading PDF: ${errorData.detail || response.statusText}`, 'error');
+                        } catch (jsonError) {
+                            console.error('Could not parse error response as JSON:', jsonError);
+                            addMessage(`Error uploading PDF: ${response.statusText || 'Server error'}`, 'error');
+                        }
+                        // Re-enable the upload input if there was an error
+                        pdfUpload.disabled = false;
+                        disableChat();
+                    }
+                } catch (error) {
+                    console.error('Network or other error during upload:', error);
+                    addMessage(`Error uploading PDF: ${error.message}`, 'error');
+                    // Re-enable the upload input if there was an error
+                    pdfUpload.disabled = false;
+                    disableChat();
+                }
+            }
+        });
+
+        sendButton.addEventListener('click', sendQuery);
+        userInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                sendQuery();
+            }
+        });
+
+        async function sendQuery() {
+            const query = userInput.value.trim();
+            if (!query || !uploadedPdfFilename || isGenerating) {
+                return; // Do nothing if query is empty, no PDF is uploaded, or already generating
+            }
+
+            addMessage(query, 'user');
+            userInput.value = ''; // Clear input field
+            sendButton.disabled = true; // Disable button while waiting for response
+            
+            // Add the "Generating..." message
+            const generatingMsg = addGeneratingMessage();
+
+            const requestBody = {
+                pdf_filename: uploadedPdfFilename,
+                query: query
+                // Add other parameters from QueryRequest if needed
+            };
+            console.log('Sending query request:', JSON.stringify(requestBody));
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/rag_query/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody),
+                });
+
+                // Remove the generating message
+                removeGeneratingMessage();
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Query API Response:', data);
+                    // Changed data.answer to data.response to match the RAG function output
+                    const answer = data.response || JSON.stringify(data); // Fallback
+                    addMessage(answer, 'bot');
+                    // Add an extra scroll to bottom to ensure it scrolls after content renders
+                    scrollToBottom();
+                } else {
+                    try {
+                        const errorData = await response.json();
+                        console.error('Error querying RAG:', response.status, errorData);
+                        // FastAPI often uses 'error' or 'detail' for errors
+                        addMessage(`Error getting answer: ${errorData.error || errorData.detail || response.statusText}`, 'error');
+                    } catch (jsonError) {
+                        console.error('Could not parse error response as JSON:', jsonError);
+                        addMessage(`Error getting answer: ${response.statusText || 'Server error'}`, 'error');
+                    }
+                }
+            } catch (error) {
+                // Remove the generating message if there was an error
+                removeGeneratingMessage();
+                
+                console.error('Network or other error during query:', error);
+                addMessage(`Error getting answer: ${error.message}`, 'error');
+            } finally {
+                if(uploadedPdfFilename) { // Only re-enable if a PDF is still considered uploaded
+                    sendButton.disabled = false;
+                }
+                // Ensure one final scroll to bottom
+                scrollToBottom();
+            }
+        }
+    </script>
+</body>
+</html>
