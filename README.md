@@ -1,49 +1,116 @@
-# 🤖 PDF RAG Chatbot with LangGraph and Together AI
+# PDF RAG Chatbot with Adaptive Retrieval
 
-This project implements a Retrieval-Augmented Generation (RAG) chatbot using Streamlit for the UI, LangGraph for building the conversational agent, Together AI for the Large Language Model (LLM), ChromaDB for the vector store, and HuggingFace sentence-transformers for embeddings.
+A PDF Question Answering system that uses an adaptive retrieval approach based on query type classification. The system uses an in-memory vector store for simplicity and ease of deployment.
 
-The chatbot allows you to chat with your PDF documents 📄. It automatically loads PDFs from a `documents` folder, creates or updates a vector database, and uses this database to answer your questions based on the document content.
+## Features
 
-## ✨ Features
+- Upload PDF documents for processing
+- Automatic classification of queries into Factual, Analytical, Opinion, or Contextual types
+- Specialized retrieval strategies for each query type
+- API for question answering against uploaded PDFs
+- Document management system with user-specific collections
+- Simple in-memory vector storage for quick setup
 
-*   **🖥️ Streamlit Interface:** Simple and interactive web UI for chatting.
-*   **🧠 LangGraph Agent:** Manages the flow of conversation, including deciding when to retrieve information or generate a response.
-*   **🔗 Together AI Integration:** Leverages powerful LLMs via the Together AI API.
-*   **💾 ChromaDB Vector Store:** Stores and retrieves document embeddings efficiently.
-*   **🔄 Automatic Synchronization:** Detects added or removed PDFs in the `documents` folder on startup and updates the vector store accordingly.
-*   **📊 Sidebar Status:** Loading and synchronization messages are displayed neatly in the sidebar.
+## Architecture
 
-## ⚙️ Setup
+- FastAPI backend for REST API endpoints
+- Sentence Transformer (`all-mpnet-base-v2`) for generating embeddings
+- Llama 3.3 70B Instruct Turbo for LLM tasks (via Together.ai)
+- Custom SimpleVectorStore for in-memory vector storage
+- PyMuPDF (fitz) for PDF text extraction
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <your-repo-url>
-    cd Chatbot_Rag
-    ```
+## Setup
 
-2.  **Create a virtual environment (recommended):**
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
+### Prerequisites
 
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+- Python 3.9+ 
+- Together.ai API key (for LLM access)
 
-## 🛠️ Configuration
+### Installation
 
-1.  **🔑 Together AI API Key:** You need an API key from [Together AI](https://api.together.xyz/). The application will prompt you to enter this key in the Streamlit sidebar.
-2.  **📄 PDF Documents:** Place the PDF files you want to chat with into the `Chatbot_Rag/documents` folder. Create this folder if it doesn't exist.
+1. Clone the repository
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+3. Create a `.env` file with your Together.ai API key:
+   ```
+   OPENAI_API_KEY=your-together-ai-key
+   ```
 
-## ▶️ Running the Application
+## Running the Application
 
-1.  Ensure you have placed your PDF files inside the `Chatbot_Rag/documents` directory.
-2.  Navigate to the `Chatbot_Rag` directory in your terminal.
-3.  Run the Streamlit application:
-    ```bash
-    streamlit run app.py
-    ```
-4.  The application will open in your web browser. Enter your Together AI API Key in the sidebar.
-5.  The app will load embeddings, create/load/synchronize the vector database (status shown in the sidebar), and then you can start asking questions about your documents.
+Start the FastAPI server:
+
+```
+uvicorn app_fastapi:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The web interface will be available at `http://localhost:8000`. You can upload PDFs and ask questions about them through this interface.
+
+## API Endpoints
+
+### Upload a PDF
+
+```
+POST /upload_pdf/
+```
+
+- Request: Form data with file
+- Response: JSON with filename and user_id
+
+### Query a PDF
+
+```
+POST /rag_query/
+```
+
+- Request Body:
+  ```json
+  {
+    "pdf_filename": "example.pdf",
+    "query": "What is AI?",
+    "k": 4,
+    "user_context": "I'm a beginner",
+    "chunk_size": 1000,
+    "user_id": "optional-user-id"
+  }
+  ```
+- Response: JSON with query results, including retrieved documents and generated response
+
+### List User Documents
+
+```
+GET /user_documents/
+```
+
+- Response: JSON with list of user's uploaded documents
+
+### Delete Document
+
+```
+DELETE /documents/{filename}
+```
+
+- Response: JSON with deletion confirmation
+
+## Retrieval Strategies
+
+The system adaptively selects a retrieval strategy based on query classification:
+
+1. **Factual Strategy**: For precise factual information, uses query enhancement and relevance scoring.
+2. **Analytical Strategy**: For comprehensive analysis, breaks down complex queries into sub-questions.
+3. **Opinion Strategy**: For opinion-based queries, identifies and retrieves diverse perspectives.
+4. **Contextual Strategy**: For context-dependent queries, reformulates the question based on user context.
+
+## Important Notes
+
+- This implementation uses an in-memory vector store, so all data is lost when the server restarts
+- For production use, consider implementing a persistent vector store solution
+- The `SimpleVectorStore` class in `main.py` can be extended to support persistence if needed
+
+## Customization
+
+- Modify the `.env` file to adjust API settings
+- Change the embedding model or LLM in `main.py`
+- Adjust retrieval parameters like chunk size in API requests
